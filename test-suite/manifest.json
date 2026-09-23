@@ -6517,7 +6517,7 @@
     },
     {
       "id": "rust-parser-token-compare-clean",
-      "description": "GH #85: parser/domain vocabulary (parser token iterators, layout markers, session_id, signature_format, credential_type, jwt_header, map keys) must not trigger the constant-time comparison detector.",
+      "description": "GH #85: parser/domain vocabulary (parser token iterators, layout markers, session_id, signature_format, credential_type, jwt_header, authorization_scope, map keys) must not trigger the constant-time comparison detector.",
       "path": "test-suite/rust/clean/parser_token_compare.rs",
       "language": "rust",
       "tags": ["rust", "security", "constant-time", "clean"],
@@ -6670,7 +6670,7 @@
     },
     {
       "id": "python-parser-token-compare-clean",
-      "description": "GH #85 (Python): parser/domain vocabulary (parser token lists, a shell-word `token == \"rm\"`, a call-signature lookup `TARGET_SIGS.get(sig)`, session_id, signature_format, credential_type, jwt_header, map keys) must not trigger the constant-time comparison detector. The `sig`/`token` shapes are the false positives UBS raised against its own helpers.",
+      "description": "GH #85 (Python): parser/domain vocabulary (parser token lists, a shell-word `token == \"rm\"`, a call-signature lookup `TARGET_SIGS.get(sig)`, session_id, signature_format, credential_type, jwt_header, authorization_scope, map keys) must not trigger the constant-time comparison detector. The `sig`/`token` shapes are the false positives UBS raised against its own helpers.",
       "path": "test-suite/python/security/parser_token_compare_clean.py",
       "language": "python",
       "tags": ["python", "security", "constant-time", "clean"],
@@ -6817,7 +6817,7 @@
     },
     {
       "id": "golang-parser-token-compare-clean",
-      "description": "GH #85 (Go): parser/domain vocabulary (parser token slices, a shell-word `token == \"rm\"`, sessionID, signatureFormat, credentialType, jwtHeader, map keys) must not trigger the constant-time comparison detector.",
+      "description": "GH #85 (Go): parser/domain vocabulary (parser token slices, a shell-word `token == \"rm\"`, sessionID, signatureFormat, credentialType, jwtHeader, authorizationScope, map keys) must not trigger the constant-time comparison detector.",
       "path": "test-suite/golang/security/parser_token_compare_clean.go",
       "language": "golang",
       "tags": ["golang", "security", "constant-time", "clean"],

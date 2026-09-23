@@ -29,6 +29,10 @@ pub fn jwt_header_is_jose(jwt_header: &str) -> bool {
     jwt_header == "JOSE"
 }
 
+pub fn authorization_scope_is_local(authorization_scope: &str) -> bool {
+    authorization_scope == "local_clone_only"
+}
+
 pub fn map_key_present(key: &str, keys: &[String]) -> bool {
     keys.iter().any(|entry| entry == key)
 }

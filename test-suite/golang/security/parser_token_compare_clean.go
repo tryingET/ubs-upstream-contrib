@@ -46,6 +46,10 @@ func JWTHeaderIsJOSE(jwtHeader string) bool {
 	return jwtHeader == "JOSE"
 }
 
+func AuthorizationScopeIsLocal(authorizationScope string) bool {
+	return authorizationScope == "local_clone_only"
+}
+
 func MapKeyPresent(key string, keys []string) bool {
 	for _, entry := range keys {
 		if entry == key {

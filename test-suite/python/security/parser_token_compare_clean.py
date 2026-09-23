@@ -48,5 +48,9 @@ def jwt_header_is_jose(jwt_header):
     return jwt_header == "JOSE"
 
 
+def authorization_scope_is_local(authorization_scope):
+    return authorization_scope == "local_clone_only"
+
+
 def map_key_present(key, keys):
     return any(entry == key for entry in keys)
