@@ -31,6 +31,8 @@ assignment_re = re.compile(r'\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b[
 identifier_re = re.compile(r'^([A-Za-z_$][A-Za-z0-9_$]*)\b')
 signal_property_re = re.compile(r'\bsignal\s*:')
 signal_shorthand_re = re.compile(r'[{,]\s*signal\s*(?:[,}])')
+leading_dot_fetch_re = re.compile(r'^\.\s*fetch\s*\(')
+global_receiver_end_re = re.compile(r'(?<![\w$.])(window|globalThis)\s*$')
 
 
 def code_line(source_line):
@@ -139,12 +141,35 @@ def leading_identifier(arg):
     return match.group(1) if match else ""
 
 
+def join_global_receivers(lines):
+    """Rewrite a formatter-wrapped `window` / `.fetch(` chain as `window.fetch(`.
+
+    Prettier breaks `window.fetch(url).then(...)` after the receiver, leaving
+    `.fetch(` at the start of a line. fetch_start_re rejects a preceding `.` (so
+    `api.fetch(` stays a method call), which also hid these global fetches. The
+    receiver is prefixed onto the continuation line so the unchanged statement,
+    argument and signal logic sees a normal `window.fetch(` call.
+    """
+    joined = list(lines)
+    previous = ""
+    for idx, line in enumerate(lines):
+        current = code_line(line).strip()
+        if not current:
+            continue
+        receiver = global_receiver_end_re.search(previous)
+        if receiver and leading_dot_fetch_re.match(current):
+            joined[idx] = receiver.group(1) + line.lstrip()
+        previous = current
+    return joined
+
+
 def scan_file_findings(path: Path) -> Iterator[tuple[int, str]]:
     """Yield (line, sample_text) per detection; logic identical to the heredoc."""
     try:
         lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
     except Exception:
         return
+    lines = join_global_receivers(lines)
 
     safe_init_vars = set()
     safe_request_vars = set()
