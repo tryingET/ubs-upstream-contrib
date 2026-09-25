@@ -175,6 +175,11 @@ def scan_patterns(
         return counters
     texts: dict[Path, str] = {}
     for path in files:
+        # Manifests remain scan inputs for other analysis layers, but JSON data
+        # is not JavaScript code. Exclude it before project-wide gates as well
+        # as matching: data strings must neither enable nor suppress a rule.
+        if path.suffix.lower() in {".json", ".jsonc"}:
+            continue
         try:
             texts[path] = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:

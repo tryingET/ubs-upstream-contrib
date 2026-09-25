@@ -111,6 +111,79 @@ class ScanTests(unittest.TestCase):
 
 
 class ExemplarPatternsTests(unittest.TestCase):
+    def scan_files(self, contents, patterns=None):
+        with tempfile.TemporaryDirectory(prefix="ubs-json-boundary-") as tmp:
+            files = []
+            for name, text in contents.items():
+                path = Path(tmp) / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(path)
+            sink = io.StringIO()
+            counters = scan_patterns(
+                load_patterns() if patterns is None else patterns, files, sink, skip=set(),
+            )
+            records = [json.loads(line) for line in sink.getvalue().splitlines()]
+            return counters, records
+
+    def test_json_data_never_enters_code_patterns(self) -> None:
+        for name in ("package-lock.json", "package.json", "nested/data.json",
+                     "data.JSON", "tsconfig.jsonc"):
+            for count in (1, 183):
+                with self.subTest(name=name, count=count):
+                    data = {f"item{i}": {"integrity": "sha512-abc==",
+                            "description": "debugger; eval(input); a != b"}
+                            for i in range(count)}
+                    text = json.dumps(data, indent=2)
+                    if name.endswith(".jsonc"):
+                        text = "// debugger; a == b\n" + text
+                    counters, records = self.scan_files({name: text})
+                    self.assertEqual(counters, {"critical": 0, "warning": 0, "info": 0})
+                    self.assertEqual(records, [])
+
+    def test_real_source_equality_survives_mixed_json_input(self) -> None:
+        rule = "js.type-coercion.loose-equality"
+        patterns = [p for p in load_patterns() if p.rule_id == rule]
+        self.assertEqual(len(patterns), 1)
+        for suffix in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json.js", ".custom"):
+            with self.subTest(suffix=suffix):
+                counters, records = self.scan_files({
+                    "package-lock.json": '{"integrity": "sha512-abc=="}',
+                    "source" + suffix: "// header\nif (a == b) use(a);\nif (a != b) use(b);\n",
+                }, patterns)
+                self.assertEqual(counters, {"critical": 2, "warning": 0, "info": 0})
+                self.assertEqual([r["line"] for r in records], [2, 3])
+                self.assertTrue(all(r["rule"] == rule and r["severity"] == "critical"
+                                    and Path(r["path"]).name == "source" + suffix
+                                    for r in records))
+        counters, records = self.scan_files({"strict.js": "a === b; a !== b;"}, patterns)
+        self.assertEqual(counters["critical"], 0)
+        self.assertEqual(records, [])
+
+    def test_json_cannot_activate_project_wide_code_gate(self) -> None:
+        pattern = _pat(gate_regex=re.compile(r"enable_check"))
+        counters, records = self.scan_files({
+            "package.json": '{"description": "enable_check"}',
+            "source.js": "debugger;\n",
+        }, [pattern])
+        self.assertEqual(counters["critical"], 0)
+        self.assertEqual(records, [])
+        counters, _ = self.scan_files({"source.js": "enable_check(); debugger;"}, [pattern])
+        self.assertEqual(counters["critical"], 1)
+
+    def test_json_cannot_suppress_project_wide_code_findings(self) -> None:
+        pattern = _pat(suppress_when_regex=re.compile(r"disable_check"))
+        counters, records = self.scan_files({
+            "package.json": '{"description": "disable_check"}',
+            "source.ts": "debugger;\n",
+        }, [pattern])
+        self.assertEqual(counters["critical"], 1)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(Path(records[0]["path"]).name, "source.ts")
+        counters, records = self.scan_files({"source.ts": "disable_check(); debugger;"}, [pattern])
+        self.assertEqual(counters["critical"], 0)
+        self.assertEqual(records, [])
+
     def test_exemplar_module_loads(self) -> None:
         patterns = load_patterns()
         rules = {p.rule_id for p in patterns}
@@ -710,6 +783,44 @@ class MetaRunnerRegressionTests(unittest.TestCase):
         loose = [f for s in report["scanners"] for f in s.get("findings", [])
                  if f["rule"] == "js.type-coercion.loose-equality"]
         self.assertEqual([(Path(f["path"]).name, f["line"]) for f in loose], [("loose.ts", 2)])
+
+
+
+@unittest.skipUnless(shutil.which("ast-grep"), "ast-grep required for CLI coverage")
+class JsonBoundaryCliTests(unittest.TestCase):
+    def test_direct_and_file_list_keep_json_without_code_findings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ubs-json-cli-") as tmp:
+            root = Path(tmp)
+            manifest = root / "package-lock.json"
+            manifest.write_text('{"lockfileVersion": 3, "integrity": "sha512-abc=="}\n')
+            env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": tmp,
+                   "UBS_NO_AUTO_UPDATE": "1", "UBS_NO_CACHE": "1"}
+            for mixed in (False, True):
+                files = [manifest]
+                if mixed:
+                    source = root / "source.ts"
+                    source.write_text("if (a == b) use(a);\n")
+                    files.append(source)
+                listing = root / "inputs.list"
+                listing.write_bytes(b"\0".join(os.fsencode(p) for p in files) + b"\0")
+                commands = [
+                    [str(REPO_ROOT / "ubs"), "--ci", "--format=json", *map(str, files)],
+                    [str(REPO_ROOT / "modules/ubs-js.sh"), str(root), "--ci",
+                     "--format=json", "--files-from=" + str(listing)],
+                ]
+                for command in commands:
+                    with self.subTest(mixed=mixed, command=command[0]):
+                        proc = subprocess.run(command, cwd=root, env=env, text=True,
+                                              capture_output=True, timeout=60)
+                        self.assertEqual(proc.returncode, int(mixed), proc.stderr + proc.stdout)
+                        doc = json.loads(proc.stdout)
+                        if "scanners" in doc:
+                            self.assertEqual(len(doc["scanners"]), 1)
+                            doc = doc["scanners"][0]
+                        self.assertEqual(doc["status"], "ok")
+                        self.assertEqual(doc["files"], len(files))
+                        self.assertEqual(doc["critical"], int(mixed))
+
 
 
 
