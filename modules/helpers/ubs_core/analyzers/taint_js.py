@@ -488,11 +488,27 @@ def query_argument(expr: str) -> str:
     return expr
 
 
+def is_property_name(expr: str, start: int, end: int) -> bool:
+    """True when expr[start:end] names a property rather than a variable.
+
+    `user.email` / `user?.email` access a member, and `{ email: x }` /
+    `{ a, email: x }` declare a key; neither reads a variable called `email`.
+    Spread (`...email`), shorthand (`{ email }`) and ternaries (`c ? email : d`)
+    are real references and stay tainted.
+    """
+    before = expr[:start].rstrip()
+    if before.endswith('.') and not before.endswith('...'):
+        return True
+    after = expr[end:].lstrip()
+    return after.startswith(':') and not after.startswith('::') and before.endswith(('{', ','))
+
+
 def expr_has_tainted(expr: str, tainted):
     expr = lexical_views(expr)[1]
     for name, meta in tainted.items():
-        if re.search(rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])", expr):
-            return name, meta
+        for match in re.finditer(rf"(?<![A-Za-z0-9_$]){re.escape(name)}(?![A-Za-z0-9_$])", expr):
+            if not is_property_name(expr, match.start(), match.end()):
+                return name, meta
     return None, None
 
 
