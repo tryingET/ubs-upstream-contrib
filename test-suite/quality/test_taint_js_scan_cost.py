@@ -142,6 +142,129 @@ class LoopStateConvergenceTests(unittest.TestCase):
                 ], source + "\n" + result.stdout + result.stderr)
 
 
+class LoopExitConvergenceTests(unittest.TestCase):
+    """Loops over a freshly allocated iterable whose body never falls through.
+
+    Feature: the loop fixed point keeps the state it already reached
+      Background: evaluating the loop header allocates on the current state,
+        and a body that always returns, throws, breaks or waits on a pending
+        summary yields no normal output. A join of entry and that output alone
+        discards the header's allocations, so it never equals the current
+        state; the solver then alternates forever (a module timeout) or stops
+        on the entry state and loses the loop's facts.
+      Scenario: the body leaves by return, throw or break; a body awaits a
+        method still being summarized; the iterable comes from another module.
+        Given such a loop that feeds a tainted element to a DOM sink,
+        When taint_js analyzes it,
+        Then it finishes within the ten-second deadline
+        And it reports exactly that sink.
+    """
+
+    CASE = "ak6781-loop-exit-fresh-iterable"
+    COLLECT = "function collect(input) { const items = [input]; return items; }"
+    SINGLE = (
+        ("return", [COLLECT,
+                    "function first(req) {",
+                    "  for (const item of collect(req.query.html)) {",
+                    "    document.body.innerHTML = item;",
+                    "    return item;",
+                    "  }",
+                    "  return '';",
+                    "}"], [["js.taint.xss", 4]]),
+        ("throw", [COLLECT,
+                   "function first(req) {",
+                   "  for (const item of collect(req.query.html)) {",
+                   "    document.body.innerHTML = item;",
+                   "    throw new Error(item);",
+                   "  }",
+                   "}"], [["js.taint.xss", 4]]),
+        ("break", [COLLECT,
+                   "function first(req) {",
+                   "  let found = '';",
+                   "  for (const item of collect(req.query.html)) {",
+                   "    found = item;",
+                   "    break;",
+                   "  }",
+                   "  document.body.innerHTML = found;",
+                   "}"], [["js.taint.xss", 8]]),
+        ("pending-method", [COLLECT,
+                            "class Healer {",
+                            "  async check(value) { return value.length > 3; }",
+                            "  async first(req) {",
+                            "    for (const item of collect(req.query.html)) {",
+                            "      const ok = await this.check(item);",
+                            "      if (!ok) document.body.innerHTML = item;",
+                            "    }",
+                            "  }",
+                            "}"], [["js.taint.xss", 7]]),
+    )
+
+    def run(self, result=None):
+        started = time.perf_counter()
+        print(f"[{self.CASE}] RUN", flush=True)
+        result = super().run(result)
+        failed = any(test is self or getattr(test, "test_case", None) is self
+                     for test, _ in (*result.failures, *result.errors))
+        print(f"[{self.CASE}] {'FAIL' if failed else 'PASS'} "
+              f"({time.perf_counter() - started:.2f}s)", flush=True)
+        return result
+
+    def analyze(self, label: str, script: str, paths: list[Path]) -> list:
+        env = dict(os.environ, PYTHONPATH=str(HELPERS_DIR))
+        command = [sys.executable, "-c", script, *map(str, paths)]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=10)
+        except subprocess.TimeoutExpired as exc:
+            self.fail(f"{label} did not converge within 10 s\n"
+                      f"stdout={exc.stdout!r}\nstderr={exc.stderr!r}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            self.fail(f"{label} returned invalid JSON: {exc}\n"
+                      f"stdout={result.stdout}\nstderr={result.stderr}")
+
+    def scratch(self) -> Path:
+        artifacts = REPO_ROOT / "test-suite" / "artifacts"
+        artifacts.mkdir(exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=self.CASE + "-", dir=artifacts))
+
+    def test_loops_that_never_fall_through_converge_and_keep_their_facts(self) -> None:
+        script = ("import json, sys; from pathlib import Path; "
+                  "from ubs_core.analyzers.taint_js import scan_file_findings; "
+                  "print(json.dumps([(rule, line) for rule, line, _, _ "
+                  "in scan_file_findings(Path(sys.argv[1]))]))")
+        for label, lines, expected in self.SINGLE:
+            with self.subTest(exit=label):
+                path = self.scratch() / "handler.js"
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                findings = self.analyze(label, script, [path])
+                self.assertEqual(findings, expected, "\n".join(lines))
+
+    def test_a_loop_over_an_imported_function_converges_across_modules(self) -> None:
+        scratch = self.scratch()
+        dependency, importer = scratch / "collect.mjs", scratch / "first.mjs"
+        dependency.write_text(f"export {self.COLLECT}\n", encoding="utf-8")
+        importer.write_text("\n".join([
+            "import { collect } from './collect.mjs';",
+            "export function first(req) {",
+            "  for (const item of collect(req.query.html)) {",
+            "    document.body.innerHTML = item;",
+            "    return item;",
+            "  }",
+            "  return '';",
+            "}",
+        ]) + "\n", encoding="utf-8")
+        script = ("import json, sys; from pathlib import Path; "
+                  "from ubs_core.analyzers.taint_js import run; "
+                  "from ubs_core.registry import RunContext; "
+                  "files = [Path(arg) for arg in sys.argv[1:]]; "
+                  "print(json.dumps(sorted([finding['rule'], Path(finding['path']).name, "
+                  "finding['line']] for finding in run(RunContext(lang='javascript', files=files)))))")
+        findings = self.analyze("cross-module", script, [dependency, importer])
+        self.assertEqual(findings, [["javascript.taint.xss", "first.mjs", 4]])
+
+
 class ProjectMemoryTests(unittest.TestCase):
     def test_400k_line_scan_preserves_findings_below_200_mib(self) -> None:
         self.check_project(connected=False)
