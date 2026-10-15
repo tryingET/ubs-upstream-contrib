@@ -10,7 +10,9 @@ Repository: <https://github.com/Dicklesworthstone/ultimate_bug_scanner>
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+
+- JavaScript taint analysis converges on recursive interpreters. Once a function calls itself, each call into it from outside its recursion gets one widened summary, shared by the recursive calls and by every call made inside it: its input is the join of all inputs it has seen, and its returned allocations are one weak object per allocation site and entry. A recursive `run()` that appends `log()` objects to a captured array met a new input heap at almost every call and stopped at the work limit; it now finishes with its findings, and constant fields stay clean. Outside callers of a recursive function, and all calls without recursion, stay apart as before.
 
 ---
 
